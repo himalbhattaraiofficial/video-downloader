@@ -178,6 +178,12 @@ HTML_TEMPLATE = '''
             border: 1px solid #f5c6cb;
         }
         
+        .status-warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
         .download-link {
             display: none;
             margin-top: 15px;
@@ -197,6 +203,16 @@ HTML_TEMPLATE = '''
         
         .download-link a:hover {
             background: #218838;
+        }
+        
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 13px;
+            color: #1565c0;
         }
         
         @media (max-width: 600px) {
@@ -220,10 +236,14 @@ HTML_TEMPLATE = '''
         <h1>🎬 Video Downloader</h1>
         <p class="subtitle">Download videos from YouTube and other platforms</p>
         
+        <div class="info-box">
+            💡 <strong>Tip:</strong> If YouTube videos don't work, try videos from other platforms like Vimeo, Dailymotion, Twitter, or TikTok!
+        </div>
+        
         <form id="download-form">
             <div class="form-group">
                 <label for="url">Video URL</label>
-                <input type="url" id="url" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
+                <input type="url" id="url" name="url" placeholder="Paste video URL here..." required>
             </div>
             
             <div class="form-group">
@@ -346,16 +366,26 @@ def get_info():
         if not url:
             return jsonify({'success': False, 'error': 'No URL provided'})
         
+        # Enhanced yt-dlp options to bypass bot detection
         ydl_opts = {
             'format': 'best',
             'quiet': True,
             'no_warnings': True,
+            'nocheckcertificate': True,
+            'geo_bypass': True,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],
-                    'player_skip': ['webpage', 'configs']
+                    'player_client': ['android', 'ios', 'web'],
+                    'player_skip': ['webpage', 'js'],
+                    'skip': ['hls', 'dash']
                 }
             },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            }
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -363,23 +393,30 @@ def get_info():
             title = info.get('title', 'video')
             formats = info.get('formats', [])
             
+            # Filter formats based on user selection
             if format_type == 'audio':
                 valid_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('url')]
             else:
                 valid_formats = [f for f in formats if f.get('vcodec') != 'none' and f.get('url')]
+                if format_type != 'webm':
+                    valid_formats = [f for f in valid_formats if f.get('ext') in ['mp4', 'm4a']]
+                
                 if quality != 'best':
-                    valid_formats = [f for f in valid_formats if f.get('height', 0) <= int(quality)]
+                    target_height = int(quality)
+                    valid_formats = [f for f in valid_formats if f.get('height', 0) <= target_height]
             
+            # Fallback to any available format
             if not valid_formats:
                 valid_formats = [f for f in formats if f.get('url')]
             
             if not valid_formats:
-                return jsonify({'success': False, 'error': 'No downloadable formats found'})
+                return jsonify({'success': False, 'error': 'No downloadable formats found for this video'})
             
+            # Select best format
             if format_type == 'audio':
-                best_format = max(valid_formats, key=lambda x: x.get('abr', 0))
+                best_format = max(valid_formats, key=lambda x: x.get('abr', 0) or 0)
             else:
-                best_format = max(valid_formats, key=lambda x: x.get('height', 0))
+                best_format = max(valid_formats, key=lambda x: (x.get('height', 0) or 0, x.get('tbr', 0) or 0))
             
             download_url = best_format.get('url')
             
@@ -392,11 +429,16 @@ def get_info():
                 'download_url': download_url
             })
             
+    except yt_dlp.utils.DownloadError as e:
+        error_str = str(e)
+        if 'Sign in to confirm' in error_str or 'bot' in error_str.lower():
+            return jsonify({
+                'success': False, 
+                'error': 'YouTube is blocking this request. Try: 1) A different video 2) Videos from other platforms (Vimeo, Twitter, TikTok, etc.)'
+            })
+        return jsonify({'success': False, 'error': f'Download error: {error_str}'})
     except Exception as e:
-        error_msg = str(e)
-        if 'Sign in to confirm' in error_msg or 'bot' in error_msg:
-            return jsonify({'success': False, 'error': 'YouTube bot check. Try again in a moment.'})
-        return jsonify({'success': False, 'error': error_msg})
+        return jsonify({'success': False, 'error': f'Unexpected error: {str(e)}'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

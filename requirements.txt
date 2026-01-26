@@ -2,4 +2,7 @@ Flask==3.0.0
 gunicorn==21.2.0
 yt-dlp>=2024.12.6
 brotli
+mutagen
+pycryptodome
+websockets
 certifi
